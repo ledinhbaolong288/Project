@@ -1,0 +1,453 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  LongAPI
+
+Globals:
+  Function:
+    Timeout: 29
+    Runtime: nodejs14.x
+    Architectures:
+      - x86_64
+    Handler: index.handler
+    Layers:
+      - !Ref StoreLayer
+
+Resources:
+  StoreApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: APIStore
+      StageName: Prod
+      Auth:
+        Authorizers:
+          AuthorizeCognito:
+            UserPoolArn: !GetAtt StoreUserPool.Arn
+
+  StoreUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: Stores
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireNumbers: True
+          RequireUppercase: True
+      Schema:
+        - AttributeDataType: String
+          Mutable: True
+          Name: email
+          Required: True
+        - AttributeDataType: String
+          Mutable: True
+          Name: role
+          Required: False
+
+  StoreUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: Store-client
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      ReadAttributes:
+        - email
+        - custom:role
+      WriteAttributes:
+        - email
+        - custom:role
+      UserPoolId: !Ref StoreUserPool
+
+  StoreS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: s3bucket-ldblong
+
+  StoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: Storerole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+
+  StoreDynamoDBPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: DynamoDBPolicies
+      Roles:
+        - !Ref StoreRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:DeleteItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:BatchGetItem
+              - dynamodb:Scan
+              - dynamodb:Query
+              - dynamodb:BatchWriteItem
+            Resource: "*"
+
+  StoreS3Policy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: S3Policies
+      Roles:
+        - !Ref StoreRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:ListBucket
+            Resource: "*"
+
+  ProductTableName:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Products
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: product_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: product_id
+          KeyType: HASH
+
+  CategoryTableName:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Categories
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: category_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: category_id
+          KeyType: HASH
+
+  OrderTableName:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Orders
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: order_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: order_id
+          KeyType: HASH
+
+  StoreLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: StoreLayer
+      ContentUri: nodejs.zip
+      CompatibleRuntimes:
+        - nodejs14.x
+      RetentionPolicy: Retain
+
+  GetProducts:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: getproducts
+      CodeUri: dist/GetProducts
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+          S3_BUCKET_NAME: !Ref StoreS3Bucket
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: get
+            Path: /products
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  GetProductById:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: getproductbyid
+      CodeUri: dist/GetProductById
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+          S3_BUCKET_NAME: !Ref StoreS3Bucket
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: get
+            Path: /products/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  CreateProduct:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: createproduct
+      CodeUri: dist/CreateProduct
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: post
+            Path: /products
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  DeleteProduct:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: deleteproduct
+      CodeUri: dist/DeleteProduct
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: delete
+            Path: /products/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  UpdateProduct:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: updateproduct
+      CodeUri: dist/UpdateProduct
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: put
+            Path: /products/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  GetCategories:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: getcategories
+      CodeUri: dist/GetCategories
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: get
+            Path: /categories
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  GetCategoryById:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: getcategorybyid
+      CodeUri: dist/GetCategoryById
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+          S3_BUCKET_NAME: !Ref StoreS3Bucket
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: get
+            Path: /categories/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  CreateCategory:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: createcategory
+      CodeUri: dist/CreateCategory
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: post
+            Path: /categories
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  DeleteCategory:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: deletecategory
+      CodeUri: dist/DeleteCategory
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: delete
+            Path: /categories/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  UpdateCategory:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: updatecategory
+      CodeUri: dist/UpdateCategory
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          CATEGORY_TABLE_NAME: !Ref CategoryTableName
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: put
+            Path: /categories/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  Login:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: login
+      CodeUri: dist/Login
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          COGNITO_CLIENT_ID: !Ref StoreUserPoolClient
+          COGNITO_USER_POOL_ID: !Ref StoreUserPool
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: post
+            Path: /login
+            RestApiId: !Ref StoreApi
+
+  SignUp:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: signup
+      CodeUri: dist/SignUp
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          COGNITO_CLIENT_ID: !Ref StoreUserPoolClient
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: post
+            Path: /signup
+            RestApiId: !Ref StoreApi
+
+  ConfirmSignUp:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: confirmsignup
+      CodeUri: dist/ConfirmSignUp
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          COGNITO_CLIENT_ID: !Ref StoreUserPoolClient
+          COGNITO_USER_POOL_ID: !Ref StoreUserPool
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: post
+            Path: /signup/cofirm
+            RestApiId: !Ref StoreApi
+
+  UploadImage:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: uploadimage
+      CodeUri: dist/UploadImage
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+          S3_BUCKET_NAME: !Ref StoreS3Bucket
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: put
+            Path: /image/{id}
+            RestApiId: !Ref StoreApi
+            Auth:
+              Authorizer: AuthorizeCognito
+
+  CreateThumbnail:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: dist/CreateThumbnail
+      Role: !GetAtt StoreRole.Arn
+      Environment:
+        Variables:
+          PRODUCT_TABLE_NAME: !Ref ProductTableName
+      Events:
+        CreateThumbnailEvent:
+          Type: S3
+          Properties:
+            Bucket: !Ref StoreS3Bucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: images/products

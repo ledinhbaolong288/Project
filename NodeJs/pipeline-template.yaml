@@ -1,0 +1,328 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: AWS CLOUDFORMATION CICD (BUILD + PIPELINE) - LONGLDB
+
+Globals:
+  Function:
+    Runtime: nodejs14.x
+    Timeout: 29
+    MemorySize: 128
+
+Parameters:
+  BuildName:
+    Type: String
+    Default: store-longldb
+  CodeBuildBucketName:
+    Type: String
+    Default: codepipeline-bucket-longldb
+
+Resources:
+  #Source
+  CodeBuildBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref CodeBuildBucketName
+
+  CodeRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref BuildName
+
+  #Code Build
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: codeBuildRole-longldb
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  CodeBuildPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: codeBuildPolicy-longldb
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource:
+              - "arn:aws:logs:*:*:*"
+          - Effect: Allow
+            Action:
+              - cloudwatch:*
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:PutObject
+              - s3:GetBucketAcl
+              - s3:GetBucketLocation
+              - s3:CreateBucket
+              - s3:List*
+              - codebuild:CreateReportGroup
+              - codebuild:CreateReport
+              - codebuild:UpdateReport
+              - codebuild:BatchPutTestCases
+              - codebuild:BatchPutCodeCoverages
+              - codecommit:GitPull
+            Resource: "*"
+      Roles:
+        - !Ref CodeBuildRole
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref BuildName
+      Source:
+        Type: CODECOMMIT
+        Location: !GetAtt CodeRepository.CloneUrlHttp
+      TimeoutInMinutes: 5
+      ServiceRole: !Ref CodeBuildRole
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+      Artifacts:
+        Type: S3
+        Location: !Ref CodeBuildBucket
+
+  #Code Pipeline
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: codePipelineRole-longldb
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  CodePipelinePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: codePipelinePolicy-longldb
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:PassRole
+            Condition:
+              StringEqualsIfExists:
+                iam:PassedToService:
+                  - cloudformation.amazonaws.com
+                  - elasticbeanstalk.amazonaws.com
+                  - ec2.amazonaws.com
+                  - ecs-tasks.amazonaws.com
+            Resource: "*"
+          - Effect: "Allow"
+            Action:
+              - codecommit:CancelUploadArchive
+              - codecommit:GetBranch
+              - codecommit:GetCommit
+              - codecommit:GetRepository
+              - codecommit:GetUploadArchiveStatus
+              - codecommit:UploadArchive
+              - codedeploy:CreateDeployment
+              - codedeploy:GetApplication
+              - codedeploy:GetApplicationRevision
+              - codedeploy:GetDeployment
+              - codedeploy:GetDeploymentConfig
+              - codedeploy:RegisterApplicationRevision
+              - codestar-connections:UseConnection
+              - elasticbeanstalk:*
+              - ec2:*
+              - elasticloadbalancing:*
+              - autoscaling:*
+              - cloudwatch:*
+              - s3:*
+              - sns:*
+              - cloudformation:*
+              - rds:*
+              - sqs:*
+              - ecs:*
+              - lambda:InvokeFunction
+              - lambda:ListFunctions
+              - opsworks:CreateDeployment
+              - opsworks:DescribeApps
+              - opsworks:DescribeCommands
+              - opsworks:DescribeDeployments
+              - opsworks:DescribeInstances
+              - opsworks:DescribeStacks
+              - opsworks:UpdateApp
+              - opsworks:UpdateStack
+              - cloudformation:CreateStack
+              - cloudformation:DeleteStack
+              - cloudformation:DescribeStacks
+              - cloudformation:UpdateStack
+              - cloudformation:CreateChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:SetStackPolicy
+              - cloudformation:ValidateTemplate
+              - codebuild:BatchGetBuilds
+              - codebuild:StartBuild
+              - codebuild:BatchGetBuildBatches
+              - codebuild:StartBuildBatch
+              - devicefarm:ListProjects
+              - devicefarm:ListDevicePools
+              - devicefarm:GetRun
+              - devicefarm:GetUpload
+              - devicefarm:CreateUpload
+              - devicefarm:ScheduleRun
+              - servicecatalog:ListProvisioningArtifacts
+              - servicecatalog:CreateProvisioningArtifact
+              - servicecatalog:DescribeProvisioningArtifact
+              - servicecatalog:DeleteProvisioningArtifact
+              - servicecatalog:UpdateProduct
+              - cloudformation:ValidateTemplate
+              - ecr:DescribeImages
+              - states:DescribeExecution
+              - states:DescribeStateMachine
+              - states:StartExecution
+              - appconfig:StartDeployment
+              - appconfig:StopDeployment
+              - appconfig:GetDeployment
+            Resource: "*"
+      Roles:
+        - !Ref CodePipelineRole
+
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: codeDeploy-longldb
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+
+  CodeDeployPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: codeBuildPolicy-longldb
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - cloudformation:CreateChangeSet
+              - codedeploy:CreateApplication
+              - codedeploy:CreateDeployment
+              - codedeploy:CreateDeploymentGroup
+              - codedeploy:DeleteApplication
+              - codedeploy:DeleteDeploymentGroup
+              - codedeploy:GetDeployment
+              - codedeploy:GetDeploymentConfig
+              - codedeploy:RegisterApplicationRevision
+              - iam:AttachRolePolicy
+              - iam:CreateRole
+              - iam:DeleteRole
+              - iam:DeleteRolePolicy
+              - iam:DetachRolePolicy
+              - iam:GetRole
+              - iam:GetRolePolicy
+              - iam:PassRole
+              - iam:PutRolePolicy
+              - iam:TagRole
+              - iam:UntagRole
+              - lambda:AddPermission
+              - lambda:CreateAlias
+              - lambda:CreateFunction
+              - lambda:DeleteAlias
+              - lambda:DeleteFunction
+              - lambda:GetAlias
+              - lambda:GetFunction
+              - lambda:ListVersionsByFunction
+              - lambda:PublishVersion
+              - lambda:RemovePermission
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - s3:CreateBucket
+              - s3:DeleteBucket
+              - s3:GetObject
+              - s3:PutBucketNotification
+              - cognito-idp:*
+              - lambda:*
+              - apigateway:*
+            Resource: "*"
+
+      Roles:
+        - !Ref CodeDeployRole
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: CodeCommit
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration:
+                RepositoryName: !Ref BuildName
+                BranchName: master
+              OutputArtifacts:
+                - Name: SourceCodeOutputArtifact
+              RunOrder: 1
+        - Name: Build
+          Actions:
+            - Name: CodeBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: SourceCodeOutputArtifact
+              OutputArtifacts:
+                - Name: BuildOutputArtifact
+              Configuration:
+                ProjectName: !Ref BuildName
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: Deploy
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: BuildOutputArtifact
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                ChangeSetName: !Ref BuildName
+                RoleArn: !GetAtt CodeDeployRole.Arn
+                Capabilities: CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                StackName: longldb
+                TemplatePath: BuildOutputArtifact::package.yml
+              RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodeBuildBucket
+      Name: !Ref BuildName

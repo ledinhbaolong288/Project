@@ -1,0 +1,20 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 12
+    commands:
+      - npm install
+  build:
+    commands:
+      - npx tsc
+      - sam build
+  post_build:
+    commands:
+      - sam package -t template.yaml --s3-bucket product-repository-s3 --output-template-file package.yml
+artifacts:
+  discard-paths: yes
+  files:
+    - package.yml
+    - nodejs.zip
